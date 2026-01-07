@@ -140,6 +140,42 @@ public class EncryptionService {
         return decryptRSA(encryptedAESKey);
     }
 
+    /**
+     * Giải mã password từ payload client (hybrid AES + RSA)
+     * <p>
+     * Client:
+     * <ol>
+     *     <li>Generate AES key (256-bit)</li>
+     *     <li>encryptedPassword = AES(password, aesKey)</li>
+     *     <li>encryptedAesKey = RSA(aesKeyBase64, serverPublicKey)</li>
+     * </ol>
+     * Server:
+     * <ol>
+     *     <li>aesKeyBase64 = RSA decrypt(encryptedAesKey)</li>
+     *     <li>aesKey = AesUtil.keyFromString(aesKeyBase64)</li>
+     *     <li>password = AES decrypt(encryptedPassword, aesKey)</li>
+     * </ol>
+     *
+     * @param encryptedPassword mật khẩu đã mã hóa bằng AES (Base64)
+     * @param encryptedAesKey   AES key (Base64) đã mã hóa bằng RSA (Base64)
+     * @return mật khẩu gốc (plaintext)
+     */
+    public String decryptClientPassword(String encryptedPassword, String encryptedAesKey) {
+        try {
+            // 1. Giải mã AES key bằng RSA private key → aesKeyBase64
+            String aesKeyBase64 = decryptAESKeyWithRSA(encryptedAesKey);
+
+            // 2. Convert Base64 → SecretKey
+            SecretKey dynamicAesKey = AesUtil.keyFromString(aesKeyBase64);
+
+            // 3. Dùng AES key này để giải mã password
+            return AesUtil.decrypt(encryptedPassword, dynamicAesKey);
+        } catch (Exception e) {
+            log.error("Error decrypting client password (AES+RSA payload)", e);
+            throw new RuntimeException("Failed to decrypt client password", e);
+        }
+    }
+
     // ============ Helper Methods ============
 
     /**

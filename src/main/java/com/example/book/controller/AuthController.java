@@ -12,6 +12,7 @@ import com.example.book.repository.RoleRepository;
 import com.example.book.repository.UserRepository;
 import com.example.book.security.jwt.JwtTokenDto;
 import com.example.book.security.jwt.JwtUtil;
+import com.example.book.security.service.EncryptionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -40,15 +41,29 @@ public class AuthController {
     private final RoleRepository roleRepository;
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
+    private final EncryptionService encryptionService;
 
     /**
-     * Đăng nhập và nhận JWT token
+     * Đăng nhập và nhận JWT token (Hybrid Encryption: AES + RSA)
+     * <p>
+     * Request body:
+     * <pre>
+     * {
+     *   "username": "abc",
+     *   "encryptedPassword": "...",  // AES(password, aesKey), Base64
+     *   "encryptedAesKey": "..."     // RSA(aesKeyBase64, serverPublicKey), Base64
+     * }
+     * </pre>
      *
-     * @param request thông tin đăng nhập (username, password)
+     * @param request thông tin đăng nhập (username, encryptedPassword, encryptedAesKey)
      * @return JWT token
      */
     @PostMapping("/login")
-    @Operation(summary = "Đăng nhập", description = "Đăng nhập bằng username và password, nhận JWT token để xác thực các request tiếp theo")
+    @Operation(
+            summary = "Đăng nhập (AES + RSA)",
+            description = "Client encrypt password bằng AES, encrypt AES key bằng RSA public key, " +
+                    "server giải mã và authenticate, sau đó trả về JWT token"
+    )
     @ApiResponses(value = {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(
                     responseCode = "200",
@@ -61,10 +76,23 @@ public class AuthController {
             )
     })
     public ResponseEntity<ApiResponse<JwtTokenDto>> login(@Valid @RequestBody LoginRequest request) {
+        // 1. Tìm user theo username
         User user = userRepository.findByUsername(request.getUsername())
                 .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_ERROR, "Username hoặc password không đúng"));
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+        // 2. Giải mã password từ payload AES + RSA
+        String rawPassword;
+        try {
+            rawPassword = encryptionService.decryptClientPassword(
+                    request.getEncryptedPassword(),
+                    request.getEncryptedAesKey()
+            );
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Payload đăng nhập không hợp lệ");
+        }
+
+        // 3. So khớp password sau khi decrypt với password đã hash trong DB
+        if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Username hoặc password không đúng");
         }
 
