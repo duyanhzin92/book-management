@@ -2,6 +2,8 @@ package com.example.book.security.filter;
 
 import com.example.book.security.jwt.JwtUtil;
 import com.example.book.security.service.PermissionService;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -85,11 +87,91 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 log.debug("Authenticated user {} with role {} for {} {}", userId, role, requestMethod, requestUrl);
             }
 
-        } catch (Exception e) {
-            log.error("JWT authentication failed", e);
+        } catch (AccessDeniedException e) {
+            // Permission denied - đã log ở trên
+            log.warn("Access denied: {}", e.getMessage());
             SecurityContextHolder.clearContext();
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.getWriter().write("{\"error\":\"Access denied\"}");
+            try {
+                response.getWriter().write("{\"error\":\"Access denied\"}");
+            } catch (IOException ioException) {
+                log.error("Failed to write error response", ioException);
+            }
+            return;
+        } catch (ExpiredJwtException e) {
+            // Token đã hết hạn
+            log.warn("JWT token expired: {}", e.getMessage());
+            log.debug("ExpiredJwtException details:", e);
+            SecurityContextHolder.clearContext();
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            try {
+                response.getWriter().write("{\"error\":\"Token expired\"}");
+            } catch (IOException ioException) {
+                log.error("Failed to write error response", ioException);
+            }
+            return;
+        } catch (JwtException e) {
+            // JWT signature invalid, malformed, invalid format, ...
+            log.warn("JWT validation failed: {}", e.getMessage());
+            log.debug("JwtException details:", e);
+            SecurityContextHolder.clearContext();
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            try {
+                response.getWriter().write("{\"error\":\"Invalid token\"}");
+            } catch (IOException ioException) {
+                log.error("Failed to write error response", ioException);
+            }
+            return;
+        } catch (IllegalArgumentException e) {
+            // Invalid token format, null token, ...
+            log.warn("Invalid JWT token format: {}", e.getMessage());
+            log.debug("IllegalArgumentException details:", e);
+            SecurityContextHolder.clearContext();
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            try {
+                response.getWriter().write("{\"error\":\"Invalid token format\"}");
+            } catch (IOException ioException) {
+                log.error("Failed to write error response", ioException);
+            }
+            return;
+        } catch (Exception e) {
+            /**
+             * Fallback cuối cùng cho các exception chưa được handle ở trên.
+             * <p>
+             * Các exception đã được handle:
+             * <ul>
+             *     <li>AccessDeniedException - Permission denied</li>
+             *     <li>ExpiredJwtException - Token expired</li>
+             *     <li>JwtException - JWT validation failed (signature invalid, malformed, ...)</li>
+             *     <li>IllegalArgumentException - Invalid token format</li>
+             * </ul>
+             * <p>
+             * Lưu ý: IOException từ response.getWriter().write() đã được handle trong các inner try-catch blocks.
+             * IOException từ filterChain.doFilter() sẽ được propagate lên (method signature throws IOException).
+             * <p>
+             * Nếu exception rơi vào đây, có thể là:
+             * <ul>
+             *     <li>NullPointerException - null check thiếu</li>
+             *     <li>RuntimeException khác - logic error</li>
+             *     <li>Unexpected checked exception - cần thêm handler cụ thể</li>
+             * </ul>
+             * <p>
+             * ⚠️ Phải log đầy đủ để debug và fix sau này!
+             */
+            log.error("Unexpected error in JWT authentication filter: {}", e.getMessage(), e);
+            log.error("Exception type: {}", e.getClass().getName());
+            log.error("Exception stacktrace:", e);
+            if (e.getCause() != null) {
+                log.error("Caused by: {} - {}", e.getCause().getClass().getName(), e.getCause().getMessage());
+            }
+            
+            SecurityContextHolder.clearContext();
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            try {
+                response.getWriter().write("{\"error\":\"Authentication failed\"}");
+            } catch (IOException ioException) {
+                log.error("Failed to write error response after unexpected exception", ioException);
+            }
             return;
         }
 

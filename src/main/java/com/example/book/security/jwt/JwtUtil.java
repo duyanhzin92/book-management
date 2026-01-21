@@ -1,8 +1,11 @@
 package com.example.book.security.jwt;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +34,7 @@ import java.util.function.Function;
  * Signature sử dụng SHA256withRSA (không phải để mã hóa, mà để ký)
  */
 @Component
+@Slf4j
 public class JwtUtil {
 
     @Value("${jwt.secret:your-256-bit-secret-key-for-hmac-sha256-algorithm-minimum-32-characters}")
@@ -159,15 +163,67 @@ public class JwtUtil {
 
     /**
      * Validate token
+     * <p>
+     * Kiểm tra:
+     * <ul>
+     *     <li>Token có đúng format không</li>
+     *     <li>Signature có hợp lệ không</li>
+     *     <li>Token có hết hạn không</li>
+     * </ul>
      *
      * @param token JWT token
-     * @return true nếu token hợp lệ
+     * @return true nếu token hợp lệ, false nếu không hợp lệ
      */
     public Boolean validateToken(String token) {
         try {
+            // Parse và verify token (sẽ throw exception nếu invalid)
             getAllClaimsFromToken(token);
-            return !isTokenExpired(token);
+            
+            // Kiểm tra expiration
+            boolean expired = isTokenExpired(token);
+            if (expired) {
+                log.debug("Token expired");
+                return false;
+            }
+            
+            log.debug("Token validated successfully");
+            return true;
+        } catch (ExpiredJwtException e) {
+            // Token đã hết hạn
+            log.debug("Token expired: {}", e.getMessage());
+            return false;
+        } catch (JwtException e) {
+            // JWT malformed, invalid format, ...
+            log.warn("JWT validation failed: {}", e.getMessage());
+            log.debug("JwtException details:", e);
+            return false;
+        } catch (IllegalArgumentException e) {
+            // Token null hoặc empty
+            log.debug("Invalid token argument: {}", e.getMessage());
+            return false;
         } catch (Exception e) {
+            /**
+             * Fallback cuối cùng cho các exception chưa được handle ở trên.
+             * <p>
+             * Các exception đã được handle:
+             * <ul>
+             *     <li>ExpiredJwtException - Token expired</li>
+             *     <li>JwtException - JWT validation failed (signature invalid, malformed, ...)</li>
+             *     <li>IllegalArgumentException - Invalid argument</li>
+             * </ul>
+             * <p>
+             * Nếu exception rơi vào đây, có thể là:
+             * <ul>
+             *     <li>NullPointerException - token null</li>
+             *     <li>RuntimeException khác - logic error</li>
+             *     <li>Unexpected checked exception - cần thêm handler cụ thể</li>
+             * </ul>
+             * <p>
+             * ⚠️ Phải log đầy đủ để debug!
+             */
+            log.error("Unexpected error validating token: {}", e.getMessage(), e);
+            log.error("Exception type: {}", e.getClass().getName());
+            log.debug("Exception stacktrace:", e);
             return false;
         }
     }

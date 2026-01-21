@@ -2,153 +2,87 @@ package com.example.book.security.util;
 
 import com.example.book.exception.CryptoException;
 
-import java.nio.charset.StandardCharsets;
-import java.security.*;
-import java.util.Base64;
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.util.Base64;
 
 /**
- * Utility class dùng cho mã hóa RSA (Asymmetric Encryption)
+ * Utility class cho RSA (Asymmetric Encryption)
  *
- * ❗ RSA KHÔNG dùng để mã hóa dữ liệu lớn
- * → Chỉ dùng cho các mục đích:
- *   - Mã hóa khóa đối xứng (AES key)
- *   - Ký số (Digital Signature)
- *   - Trao đổi khóa trong TLS/HTTPS
- *
- * Đặc điểm RSA:
- * - Dùng cặp khóa: Public Key + Private Key
- * - Public Key: dùng để mã hóa
- * - Private Key: dùng để giải mã
- * - Tốc độ chậm, chi phí tính toán cao
- * - Key size tối thiểu: 2048 bit (bắt buộc trong thực tế)
+ * ⚠️ RSA KHÔNG dùng để mã hóa dữ liệu lớn
+ * - Chỉ dùng để encrypt AES key / small secret
  */
-public class RsaUtil {
+public final class RsaUtil {
 
-    /**
-     * Transformation của RSA:
-     * - RSA      : thuật toán bất đối xứng
-     * - ECB      : mode (bắt buộc với RSA, không giống AES)
-     * - PKCS1Padding : padding tiêu chuẩn cho RSA encryption
-     *
-     * ⚠️ RSA KHÔNG dùng IV nên không có GCMParameterSpec như AES
-     */
     private static final String ALGORITHM = "RSA/ECB/PKCS1Padding";
-
-    /**
-     * Độ dài key RSA (bit)
-     * 2048 bit là mức tối thiểu an toàn hiện nay
-     */
     private static final int KEY_SIZE = 2048;
 
+    private RsaUtil() {}
+
     /**
-     * Mã hóa dữ liệu bằng RSA Public Key
-     *
-     * 👉 Thường dùng để:
-     * - Encrypt AES key trước khi gửi qua network
-     *
-     * ❌ Không dùng để encrypt:
-     * - JSON
-     * - Password dài
-     * - File
-     *
-     * @param data dữ liệu cần mã hóa (thường là AES key)
-     * @param publicKey public key dùng để mã hóa
-     * @return chuỗi Base64 chứa dữ liệu đã mã hóa
+     * Encrypt dữ liệu nhỏ bằng RSA Public Key
      */
     public static String encrypt(String data, PublicKey publicKey) {
         try {
-            // Tạo instance Cipher theo transformation RSA/ECB/PKCS1Padding
             Cipher cipher = Cipher.getInstance(ALGORITHM);
-
-            // Khởi tạo Cipher ở chế độ ENCRYPT với Public Key
             cipher.init(Cipher.ENCRYPT_MODE, publicKey);
 
-            // Chuyển dữ liệu String → byte[] (UTF-8)
-            byte[] inputBytes = data.getBytes(StandardCharsets.UTF_8);
+            byte[] encrypted = cipher.doFinal(
+                    data.getBytes(StandardCharsets.UTF_8)
+            );
 
-            // Thực hiện mã hóa
-            byte[] encryptedBytes = cipher.doFinal(inputBytes);
+            return Base64.getEncoder().encodeToString(encrypted);
 
-            // Encode sang Base64 để dễ lưu DB / truyền HTTP
-            return Base64.getEncoder().encodeToString(encryptedBytes);
+        } catch (InvalidKeyException e) {
+            throw new CryptoException("Invalid RSA public key", e);
 
-        } catch (NoSuchAlgorithmException |
-                 NoSuchPaddingException |
-                 InvalidKeyException |
-                 BadPaddingException |
-                 IllegalBlockSizeException ex) {
+        } catch (IllegalBlockSizeException e) {
+            throw new CryptoException("Data too large for RSA encryption", e);
 
-            // Bọc exception crypto thành custom exception
-            throw new CryptoException("Encrypt data failed", ex);
+        } catch (GeneralSecurityException e) {
+            throw new CryptoException("RSA encryption failed", e);
         }
     }
 
     /**
-     * Giải mã dữ liệu bằng RSA Private Key
-     *
-     * 👉 Dùng ở phía server để:
-     * - Giải mã AES key đã được encrypt bằng Public Key
-     *
-     * @param data chuỗi Base64 đã mã hóa
-     * @param privateKey private key dùng để giải mã
-     * @return dữ liệu gốc sau khi giải mã
+     * Decrypt dữ liệu bằng RSA Private Key
      */
     public static String decrypt(String data, PrivateKey privateKey) {
         try {
-            // Tạo instance Cipher với cùng transformation
-            Cipher cipher = Cipher.getInstance(ALGORITHM);
+            byte[] encrypted = Base64.getDecoder().decode(data);
 
-            // Khởi tạo Cipher ở chế độ DECRYPT với Private Key
+            Cipher cipher = Cipher.getInstance(ALGORITHM);
             cipher.init(Cipher.DECRYPT_MODE, privateKey);
 
-            // Decode Base64 → byte[]
-            byte[] encryptedBytes = Base64.getDecoder().decode(data);
+            byte[] decrypted = cipher.doFinal(encrypted);
+            return new String(decrypted, StandardCharsets.UTF_8);
 
-            // Thực hiện giải mã
-            byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
+        } catch (IllegalArgumentException e) {
+            throw new CryptoException("Invalid Base64 ciphertext", e);
 
-            // Chuyển byte[] → String UTF-8
-            return new String(decryptedBytes, StandardCharsets.UTF_8);
+        } catch (BadPaddingException e) {
+            throw new CryptoException("Invalid RSA private key or corrupted ciphertext", e);
 
-        } catch (NoSuchAlgorithmException |
-                 NoSuchPaddingException |
-                 InvalidKeyException |
-                 BadPaddingException |
-                 IllegalBlockSizeException |
-                 IllegalArgumentException ex) {
-
-            // IllegalArgumentException có thể xảy ra khi Base64 sai
-            throw new CryptoException("Decrypt data failed", ex);
+        } catch (GeneralSecurityException e) {
+            throw new CryptoException("RSA decryption failed", e);
         }
     }
 
     /**
-     * Sinh mới một cặp RSA KeyPair (Public + Private)
-     *
-     * 👉 Thường dùng khi:
-     * - Khởi tạo hệ thống
-     * - Sinh key cho client / service
-     *
-     * @return KeyPair gồm PublicKey và PrivateKey
+     * Generate RSA KeyPair (2048-bit)
      */
     public static KeyPair generateKeyPair() {
         try {
-            // Tạo KeyPairGenerator cho thuật toán RSA
             KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-
-            // Cấu hình độ dài key (2048 bit)
             generator.initialize(KEY_SIZE);
-
-            // Sinh cặp key
             return generator.generateKeyPair();
 
-        } catch (NoSuchAlgorithmException ex) {
-            throw new CryptoException("Generate RSA key pair failed", ex);
+        } catch (NoSuchAlgorithmException e) {
+            throw new CryptoException("Generate RSA key pair failed", e);
         }
     }
-
 }

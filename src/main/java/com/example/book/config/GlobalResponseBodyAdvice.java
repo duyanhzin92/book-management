@@ -1,8 +1,10 @@
 package com.example.book.config;
 
 import com.example.book.dto.response.ApiResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.ServerHttpRequest;
@@ -16,6 +18,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
  */
 @RestControllerAdvice(basePackages = "com.example.book.controller")
 @RequiredArgsConstructor
+@Slf4j
 public class GlobalResponseBodyAdvice implements ResponseBodyAdvice<Object> {
 
     private final ObjectMapper objectMapper;
@@ -42,11 +45,41 @@ public class GlobalResponseBodyAdvice implements ResponseBodyAdvice<Object> {
         ApiResponse<Object> wrapped = ApiResponse.success(message, body);
 
         // Special case: String response must be converted to JSON string
+        // Nếu body là String, cần serialize ApiResponse thành JSON string
         if (body instanceof String) {
             try {
                 response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                return objectMapper.writeValueAsString(wrapped);
+                String jsonString = objectMapper.writeValueAsString(wrapped);
+                log.debug("Converted String response to JSON string");
+                return jsonString;
+            } catch (JsonProcessingException e) {
+                // Lỗi serialize JSON (objectMapper.writeValueAsString failed)
+                log.error("Failed to serialize ApiResponse to JSON string: {}", e.getMessage(), e);
+                // Fallback: return original String body (không wrap)
+                log.warn("Returning original String body without ApiResponse wrapper");
+                return body;
             } catch (Exception e) {
+                /**
+                 * Fallback cuối cùng cho các exception chưa được handle ở trên.
+                 * <p>
+                 * Các exception đã được handle:
+                 * <ul>
+                 *     <li>JsonProcessingException - JSON serialize failed</li>
+                 * </ul>
+                 * <p>
+                 * Nếu exception rơi vào đây, có thể là:
+                 * <ul>
+                 *     <li>NullPointerException - objectMapper null</li>
+                 *     <li>RuntimeException khác - logic error</li>
+                 *     <li>Unexpected checked exception - cần thêm handler cụ thể</li>
+                 * </ul>
+                 * <p>
+                 * ⚠️ Phải log đầy đủ để debug!
+                 */
+                log.error("Unexpected error converting String response to JSON: {}", e.getMessage(), e);
+                log.error("Exception type: {}", e.getClass().getName());
+                log.debug("Exception stacktrace:", e);
+                // Fallback: return original String body without wrapper
                 return body;
             }
         }

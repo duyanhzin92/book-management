@@ -2,6 +2,7 @@ package com.example.book.exception;
 
 import com.example.book.dto.response.ApiResponse;
 import com.example.book.dto.response.ErrorResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -23,6 +24,7 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     /**
@@ -102,18 +104,37 @@ public class GlobalExceptionHandler {
     /**
      * Fallback cho các exception khác chưa được handle riêng.
      * <p>
-     * Trong môi trường production, nên log chi tiết tại đây (stacktrace, context)
-     * và trả về message chung để tránh lộ thông tin nội bộ.
+     * Handler này catch tất cả exception chưa được handle bởi các handler cụ thể ở trên.
+     * <p>
+     * Lưu ý quan trọng:
+     * <ul>
+     *     <li>Phải log đầy đủ thông tin để debug (stacktrace, context, request info)</li>
+     *     <li>KHÔNG expose chi tiết kỹ thuật cho client (security risk)</li>
+     *     <li>Trong production: có thể tích hợp với monitoring system (Sentry, Datadog, ...)</li>
+     * </ul>
      *
-     * @param ex exception bất kỳ
+     * @param ex exception bất kỳ chưa được handle
      * @return {@link ResponseEntity} với body {@link ErrorResponse} và status 500
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<ErrorResponse>> handleGenericException(Exception ex) {
+        // Log đầy đủ thông tin để debug
+        log.error("Unhandled exception occurred: {}", ex.getClass().getName(), ex);
+        log.error("Exception message: {}", ex.getMessage());
+        log.error("Exception stacktrace:", ex);
+        
+        // Log thông tin context nếu có
+        if (ex.getCause() != null) {
+            log.error("Caused by: {}", ex.getCause().getClass().getName());
+            log.error("Caused by message: {}", ex.getCause().getMessage());
+        }
+        
+        // Tạo error response (không expose chi tiết cho client)
         ErrorResponse errorResponse = new ErrorResponse(
                 ErrorCode.INTERNAL_SERVER_ERROR,
-                "An unexpected error occurred: " + ex.getMessage()
+                "An unexpected error occurred. Please contact support if the problem persists."
         );
+        
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.<ErrorResponse>builder()
                         .success(false)

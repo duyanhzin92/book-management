@@ -7,6 +7,7 @@ import com.example.book.entity.Role;
 import com.example.book.entity.User;
 import com.example.book.entity.UserStatus;
 import com.example.book.exception.BusinessException;
+import com.example.book.exception.CryptoException;
 import com.example.book.exception.ErrorCode;
 import com.example.book.repository.RoleRepository;
 import com.example.book.repository.UserRepository;
@@ -20,6 +21,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -34,6 +36,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "Authentication", description = "APIs cho đăng nhập và đăng ký")
 public class AuthController {
 
@@ -81,13 +84,25 @@ public class AuthController {
                 .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_ERROR, "Username hoặc password không đúng"));
 
         // 2. Giải mã password từ payload AES + RSA
+        // Client đã encrypt password bằng AES, và encrypt AES key bằng RSA
+        // Server cần giải mã để lấy password gốc
         String rawPassword;
         try {
+            log.debug("Decrypting client password for user: {}", request.getUsername());
             rawPassword = encryptionService.decryptClientPassword(
                     request.getEncryptedPassword(),
                     request.getEncryptedAesKey()
             );
-        } catch (Exception e) {
+            log.debug("Password decrypted successfully for user: {}", request.getUsername());
+        } catch (CryptoException e) {
+            // Lỗi mã hóa: key sai, data bị tamper, format sai, ...
+            log.warn("Failed to decrypt login payload for user {}: {}", request.getUsername(), e.getMessage());
+            log.debug("CryptoException details:", e);
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Payload đăng nhập không hợp lệ");
+        } catch (IllegalArgumentException e) {
+            // Lỗi format: Base64 decode failed, null input, ...
+            log.warn("Invalid login payload format for user {}: {}", request.getUsername(), e.getMessage());
+            log.debug("IllegalArgumentException details:", e);
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Payload đăng nhập không hợp lệ");
         }
 
